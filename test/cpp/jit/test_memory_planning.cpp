@@ -150,7 +150,8 @@ findManagedAndUnmanagedAllocs(
         return evt1.start_time < evt2.start_time;
       });
 
-  // match mem evt pointers potentially to SSA values (if they're pointer types and are single output)
+  // match mem evt pointers potentially to SSA values (if they're pointer types
+  // and are single output)
   std::map<std::string, size_t> managed_allocs;
   std::map<std::string, size_t> unmanaged_allocs;
   std::map<intptr_t, size_t> unexpected_allocs;
@@ -429,6 +430,33 @@ TEST(MemoryPlannerTest, LSTMNaive) {
       {256, 4608, TTP((Vec{1, 64}), (Vec{64, 1}))},
   };
   testLSTM(expected_storage, expected_allocs, Strategy::NAIVE);
+}
+
+TEST(MemoryPlannerTest, SmallLinearScan) {
+  StorageAttrs expected_storage = {1344, DeviceType::CPU};
+  std::vector<AllocAttrs> expected_allocs = {
+      {448, 0, TTP(((Vec{10, 10})), ((Vec{10, 1})))},
+      {448, 448, TTP(((Vec{10, 10})), ((Vec{10, 1})))},
+      {448, 896, TTP(((Vec{10, 10})), ((Vec{10, 1})))},
+  };
+  testSmall(expected_storage, expected_allocs, Strategy::LINEAR_SCAN);
+}
+
+TEST(MemoryPlannerTest, LSTMLinearScan) {
+  StorageAttrs expected_storage = {3072, DeviceType::CPU};
+  std::vector<AllocAttrs> expected_allocs = {
+      {1024, 0, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {1024, 1024, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {1024, 2048, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {256, 0, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 256, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 512, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 768, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 1024, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 768, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 0, TTP((Vec{1, 64}), (Vec{64, 1}))},
+  };
+  testLSTM(expected_storage, expected_allocs, Strategy::LINEAR_SCAN);
 }
 
 } // namespace jit
