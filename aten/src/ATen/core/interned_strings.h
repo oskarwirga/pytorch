@@ -31,6 +31,7 @@ namespace c10 {
   _(prim, AllocateSlab)              \
   _(prim, ReleaseSlab)               \
   _(prim, AllocateTensor)           \
+  _(prim, PreallocateTensor)         \
   _(prim, ConstantMKLDNNTensor)      \
   _(prim, BroadcastMKLDNNTensors)    \
   _(prim, MKLDNNGroup)               \

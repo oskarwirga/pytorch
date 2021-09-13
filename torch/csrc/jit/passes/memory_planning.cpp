@@ -5,7 +5,6 @@
 
 #include <jit/tensorexpr/kernel.h>
 #include <torch/csrc/jit/ir/alias_analysis.h>
-#include <torch/csrc/jit/jit_log.h>
 #include <torch/csrc/jit/runtime/static/ops.h>
 #include <limits>
 
@@ -182,6 +181,55 @@ void insertAllocNodes(
   release_slab->insertBefore(graph->return_node());
 }
 
+struct frameNodeLTCmp {
+  size_t operator()(
+      const std::pair<FrameNodeId, std::vector<UniqueLiveRange>>& f1,
+      const std::pair<FrameNodeId, std::vector<UniqueLiveRange>>& f2) const {
+    return f1.first.pc < f2.first.pc;
+  }
+};
+
+void insertPreallocNodes(
+    std::shared_ptr<Graph>& graph,
+    size_t total_size,
+    std::vector<MemAllocation> allocations,
+    std::vector<std::pair<FrameNodeId, std::vector<UniqueLiveRange>>>
+        collected_node_live_ranges,
+    c10::optional<at::Device> device_type = c10::nullopt) {
+  auto slab = insertSlabNode(graph, total_size, device_type);
+  auto release_slab = graph->create(prim::ReleaseSlab, 0);
+  release_slab->addInput(slab->output());
+
+  SortedLiveRangeMap<MemRegion> allocations_map;
+  for (const auto& item : allocations) {
+    allocations_map[item.ulvr] = item.reg;
+  }
+
+  std::sort(
+      collected_node_live_ranges.begin(),
+      collected_node_live_ranges.end(),
+      frameNodeLTCmp());
+
+  for (auto& item : collected_node_live_ranges) {
+    auto frame_id = item.first;
+    auto lvrs = item.second;
+    std::sort(lvrs.begin(), lvrs.end(), liveRangeStartCmp());
+    auto node = frame_id.node;
+
+    for (const auto& lvr : lvrs) {
+      auto* alloc = graph->create(prim::PreallocateTensor, 1);
+      alloc->insertBefore(node);
+      alloc->addInput(slab->output());
+
+      auto region = allocations_map[lvr];
+      alloc->i_(attr::size, (int64_t)region.size);
+      alloc->i_(attr::offset, (int64_t)region.offset);
+      alloc->i_(attr::device_type, slab->i(attr::device_type));
+    }
+  }
+  release_slab->insertBefore(graph->return_node());
+}
+
 bool hasOutVariant(Node* node) {
   if (!node->maybeSchema()) {
     return false;
@@ -342,6 +390,188 @@ bool validateAllocations(
   }
 
   return true;
+}
+
+struct frameNodeEqCmp {
+  bool operator()(const FrameNodeId& lhs, const FrameNodeId& rhs) const {
+    if (!lhs.node->maybeSchema() || !rhs.node->maybeSchema()) {
+      return false;
+    }
+
+    return lhs.pc == rhs.pc && lhs.node->schema() == rhs.node->schema() &&
+        getHeader(lhs.node) == getHeader(rhs.node);
+  }
+};
+
+struct frameNodeHash {
+  size_t operator()(const FrameNodeId& frame_node_id) const {
+    return std::hash<size_t>()(frame_node_id.pc) ^
+        (std::hash<std::string>()(getHeader(frame_node_id.node)) << 1);
+  }
+};
+
+std::vector<std::pair<FrameNodeId, std::vector<UniqueLiveRange>>>
+collectLiveRangesPerNode(std::vector<std::pair<UniqueLiveRange, FrameNodeId>>
+                             live_range_node_header) {
+  std::unordered_map<
+      FrameNodeId,
+      std::vector<UniqueLiveRange>,
+      frameNodeHash,
+      frameNodeEqCmp>
+      node_live_ranges;
+  for (const auto& item : live_range_node_header) {
+    auto lvr = item.first;
+    auto frame_node_id = item.second;
+    node_live_ranges[frame_node_id].emplace_back(lvr);
+  }
+
+  std::vector<std::pair<FrameNodeId, std::vector<UniqueLiveRange>>>
+      collected_node_live_ranges;
+  for (const auto& item : node_live_ranges) {
+    std::vector<UniqueLiveRange> lvrs(item.second.begin(), item.second.end());
+    std::sort(lvrs.begin(), lvrs.end(), liveRangeStartCmp());
+    collected_node_live_ranges.emplace_back(std::make_pair(item.first, lvrs));
+  }
+  std::sort(
+      collected_node_live_ranges.begin(),
+      collected_node_live_ranges.end(),
+      frameNodeLTCmp());
+  return collected_node_live_ranges;
+}
+
+std::pair<
+    SortedLiveRangeMap<size_t>,
+    std::vector<std::pair<UniqueLiveRange, FrameNodeId>>>
+getManagedLiveRangesFromMemoryEvents(
+    std::vector<MemoryEvent> mem_events,
+    const std::shared_ptr<Graph> graph) {
+  SortedLiveRangeMap<size_t> managed_live_ranges;
+  std::vector<std::pair<UniqueLiveRange, FrameNodeId>> live_range_node_header;
+  live_range_node_header.reserve(mem_events.size());
+
+  std::unordered_map<intptr_t, MemoryEvent> allocs;
+  auto trace_hasher = std::hash<std::string>();
+  // validate
+  for (auto& mem_event : mem_events) {
+    if (mem_event.type == MemoryEvent::EventType::ALLOCATE) {
+      if (mem_event.frame_node_id.has_value()) {
+        allocs.insert({mem_event.addr, mem_event});
+      } else {
+        // created before interpreter started e.g. inputs and weights...
+
+        TORCH_INTERNAL_ASSERT(mem_event.frame_node_id->pc == 0);
+      }
+    } else if (mem_event.type == MemoryEvent::EventType::FREE) {
+      TORCH_INTERNAL_ASSERT(allocs.count(mem_event.addr) > 0);
+      TORCH_INTERNAL_ASSERT(allocs.find(mem_event.addr) != allocs.end());
+      auto alloc = allocs.at(mem_event.addr);
+      TORCH_INTERNAL_ASSERT(
+          alloc.type == MemoryEvent::EventType::ALLOCATE,
+          " ",
+          alloc.type,
+          " ",
+          MemoryEvent::EventType::ALLOCATE);
+      TORCH_INTERNAL_ASSERT(
+          alloc.size == mem_event.size, " ", alloc.size, " ", mem_event.size);
+      TORCH_INTERNAL_ASSERT(
+          alloc.ts < mem_event.ts, " ", alloc.ts, " ", mem_event.ts);
+
+      auto lvr = UniqueLiveRange{
+          {alloc.ts, mem_event.ts},
+          std::to_string(trace_hasher(mem_event.stack_trace.value()))};
+      managed_live_ranges.insert({lvr, alloc.size});
+
+      live_range_node_header.emplace_back(
+          std::make_pair(lvr, alloc.frame_node_id.value()));
+      allocs.erase(mem_event.addr);
+    }
+  }
+
+  if (!allocs.empty()) {
+    // TODO: jit::Value* .count()>0 doesn't work for some reason
+    // std::unordered_set<const jit::Value*> g_outputs;
+    std::unordered_set<std::string> g_outputs;
+    for (const auto& outp : graph->return_node()->outputs()) {
+      std::cout << "return outp " << outp->debugName() << "\n";
+    }
+    for (const auto& outp : graph->outputs()) {
+      g_outputs.insert(outp->debugName());
+    }
+    for (auto& alloc : allocs) {
+      TORCH_INTERNAL_ASSERT(
+          alloc.second.type == MemoryEvent::EventType::ALLOCATE &&
+          alloc.second.frame_node_id.has_value());
+      GRAPH_DEBUG("leaked alloc: ", alloc.second, "\n");
+      // TODO: this isn't a great heuristic (since tensors created within
+      // the scope of an op could be leaked but not the actual output values.
+      // a better way would be to connect allocs directly to values
+      if (alloc.second.frame_node_id.value().node->outputs().size() > 0) {
+        for (const auto& out :
+             alloc.second.frame_node_id.value().node->outputs()) {
+          TORCH_INTERNAL_ASSERT(
+              g_outputs.count(out->debugName()) > 0, out->debugName());
+        }
+      }
+      TORCH_WARN(alloc.second, " leaked");
+    }
+  }
+  return std::make_pair(managed_live_ranges, live_range_node_header);
+}
+
+void planMemoryWithTracing(
+    std::shared_ptr<Graph>& graph,
+    Strategy strat,
+    std::vector<MemoryEvent> mem_events,
+    at::Device device_type) {
+  TORCH_INTERNAL_ASSERT(!mem_events.empty());
+  SortedLiveRangeMap<size_t> managed_live_ranges;
+  std::vector<std::pair<UniqueLiveRange, FrameNodeId>> live_range_node_header;
+  std::tie(managed_live_ranges, live_range_node_header) =
+      getManagedLiveRangesFromMemoryEvents(mem_events, graph);
+  std::vector<MemAllocation> allocations;
+
+  switch (strat) {
+    case Strategy::NAIVE: {
+      allocations = naive(managed_live_ranges);
+      break;
+    }
+    case Strategy::LINEAR_SCAN: {
+      allocations = linearScanHeuristic(managed_live_ranges);
+      break;
+    }
+    case Strategy::GREEDY_BY_SIZE_WITH_SMALLEST_GAP: {
+      allocations = greedyBySizeWithSmallestGap(managed_live_ranges);
+      break;
+    }
+    case Strategy::GREEDY_BY_SIZE_WITH_FIRST_GAP: {
+      allocations = greedyBySizeWithFirstGap(managed_live_ranges);
+      break;
+    }
+    case Strategy::GREEDY_BY_LONGEST_AND_SIZE_WITH_SMALLEST_GAP: {
+      allocations = greedyByLongestAndSizeWithSmallestGap(managed_live_ranges);
+      break;
+    }
+    case Strategy::GREEDY_BY_LONGEST_AND_SIZE_WITH_FIRST_GAP: {
+      allocations = greedyByLongestAndSizeWithFirstGap(managed_live_ranges);
+      break;
+    }
+    default:
+      return;
+  }
+
+  GRAPH_DEBUG("\nnumber of allocations\n", allocations.size());
+  auto total_size = getTotalAllocationSize(allocations);
+
+  TORCH_INTERNAL_ASSERT(
+      validateAllocations(allocations, managed_live_ranges, total_size),
+      "invalid allocation",
+      strat);
+
+  auto collected_node_live_ranges =
+      collectLiveRangesPerNode(live_range_node_header);
+
+  insertPreallocNodes(
+      graph, total_size, allocations, collected_node_live_ranges);
 }
 
 std::pair<size_t, FastMap<const Value*, std::pair<UniqueLiveRange, size_t>>>

@@ -48,6 +48,12 @@ struct AllocAttrs {
   c10::TensorTypePtr ttp;
 };
 
+struct PreAllocAttrs {
+  int64_t size;
+  int64_t offset;
+  DeviceType device_type;
+};
+
 void checkAllocNodes(
     Graph& graph,
     StorageAttrs expected_storage,

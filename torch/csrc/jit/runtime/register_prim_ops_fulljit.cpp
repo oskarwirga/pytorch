@@ -3,6 +3,7 @@
 #include <ATen/core/ivalue.h>
 #include <c10/util/irange.h>
 #include <torch/csrc/jit/runtime/static/impl.h>
+#include <jit/passes/memory_planning/MemoryPlanningAllocator.h>
 
 #include <algorithm>
 #include <bitset>
@@ -180,6 +181,26 @@ RegisterOperators reg(
            auto slab = pop(stack).toStorage();
            //           slab.allocator()->raw_deallocate(slab.data());
            //           slab.unsafeReleaseStorageImpl();
+         },
+         aliasAnalysisSpecialCase()),
+     Operator(
+         prim::PreallocateTensor,
+         [](const Node* node) -> Operation {
+           int64_t size = node->i(attr::size);
+           int64_t offset = node->i(attr::offset);
+           auto device_type = static_cast<DeviceType>(node->i(attr::device_type));
+           return [offset, size, device_type](Stack* stack) {
+             c10::Storage buffer;
+             pop(stack, buffer);
+             c10::MemoryPlanningAllocator* planning_allocator =
+                 dynamic_cast<c10::MemoryPlanningAllocator*>(c10::GetAllocator(device_type));
+             if (planning_allocator) {
+               planning_allocator->push_allocation(buffer, size, offset, device_type);
+
+             IValue null;
+             push(stack, std::move(null));
+             }
+           };
          },
          aliasAnalysisSpecialCase()),
      Operator(

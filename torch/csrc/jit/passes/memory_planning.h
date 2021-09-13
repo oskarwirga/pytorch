@@ -1,5 +1,6 @@
 #pragma once
 
+#include <torch/csrc/jit/passes/memory_planning/memory_observer.h>
 #include <torch/csrc/jit/ir/ir.h>
 #include <torch/csrc/jit/runtime/static/impl.h>
 
@@ -143,6 +144,12 @@ TORCH_API bool hasOutVariant(Node* node);
 TORCH_API std::
     pair<size_t, FastMap<const Value*, std::pair<UniqueLiveRange, size_t>>>
     planMemory(const std::shared_ptr<Graph>&, Strategy);
+
+TORCH_API void planMemoryWithTracing(
+    std::shared_ptr<Graph>& graph,
+    Strategy strat,
+    std::vector<MemoryEvent> mem_events,
+    at::Device device_type);
 
 } // namespace jit
 } // namespace torch

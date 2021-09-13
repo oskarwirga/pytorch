@@ -238,6 +238,7 @@ bool printerHasSpecialCaseFor(Symbol sym) {
       prim::AllocateSlab,
       prim::ReleaseSlab,
       prim::AllocateTensor,
+      prim::PreallocateTensor,
       prim::Drop, // used in interpreter only
       prim::FusedConcat, // optimization pass adds it
       prim::FusionGroup, // optimization pass adds it
@@ -301,6 +302,7 @@ bool aliasAnalysisHasSpecialCaseFor(Symbol symbol) {
       prim::AllocateSlab,
       prim::ReleaseSlab,
       prim::AllocateTensor,
+      prim::PreallocateTensor,
       prim::Closure,
       prim::TupleUnpack,
       prim::TupleIndex,
