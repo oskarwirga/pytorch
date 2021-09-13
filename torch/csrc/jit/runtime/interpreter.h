@@ -157,5 +157,12 @@ TORCH_API at::TensorTypePtr tensorTypeInCurrentExecutionContext(
 TORCH_API std::vector<StackEntry> currentCallstack();
 TORCH_API std::vector<std::string> currentModuleHierarchy();
 
+typedef struct TORCH_API FrameNodeId {
+  size_t pc;
+  Node* node;
+} FrameNodeId;
+
+TORCH_API c10::optional<FrameNodeId> currentFrameId();
+
 } // namespace jit
 } // namespace torch

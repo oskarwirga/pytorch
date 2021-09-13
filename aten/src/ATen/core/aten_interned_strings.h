@@ -815,6 +815,7 @@ _(attr, dense_dim) \
 _(attr, descending) \
 _(attr, deterministic) \
 _(attr, device) \
+_(attr, device_type) \
 _(attr, diagonal) \
 _(attr, dilation) \
 _(attr, dim) \
@@ -1044,6 +1045,7 @@ _(attr, to) \
 _(attr, tol) \
 _(attr, total) \
 _(attr, total_length) \
+_(attr, total_size) \
 _(attr, total_weight) \
 _(attr, train) \
 _(attr, training) \

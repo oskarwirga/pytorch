@@ -305,6 +305,8 @@ TORCH_API bool& getOptConditionals();
 
 TORCH_API c10::optional<at::Device> pickDeviceType(
     const at::ArrayRef<torch::jit::Value*>& inputs);
+TORCH_API c10::optional<at::Device> pickDeviceType(
+    const std::shared_ptr<Graph>& graph);
 
 } // namespace tensorexpr
 } // namespace jit
