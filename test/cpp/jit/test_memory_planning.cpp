@@ -539,5 +539,25 @@ TEST(MemoryPlannerTest, LSTMGreedyByLongestAndSizeWithFirstGap) {
       Strategy::GREEDY_BY_LONGEST_AND_SIZE_WITH_FIRST_GAP);
 }
 
+TEST(MemoryPlannerTest, LSTMGreedyByBreadth) {
+  StorageAttrs expected_storage = {3072, DeviceType::CPU};
+  std::vector<AllocAttrs> expected_allocs = {
+      {1024, 0, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {1024, 1024, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {1024, 2048, TTP((Vec{1, 256}), (Vec{256, 1}))},
+      {256, 0, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 1024, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 256, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 512, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 768, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 512, TTP((Vec{1, 64}), (Vec{64, 1}))},
+      {256, 0, TTP((Vec{1, 64}), (Vec{64, 1}))},
+  };
+  testLSTM(
+      expected_storage,
+      expected_allocs,
+      Strategy::GREEDY_BY_BREADTH);
+}
+
 } // namespace jit
 } // namespace torch
