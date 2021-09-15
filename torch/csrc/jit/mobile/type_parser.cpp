@@ -2,6 +2,7 @@
 
 #include <ATen/core/jit_type.h>
 #include <torch/csrc/jit/frontend/parser_constants.h>
+#include <torch/csrc/jit/mobile/runtime_compatibility.h>
 #include <torch/custom_class.h>
 #include <queue>
 
@@ -31,16 +32,18 @@ class TypeParser {
     lex();
   }
 
-  TypePtr parse() {
-    std::string token = next();
-    auto simpleTypeIt = string_to_type_lut().find(token);
-    if (simpleTypeIt != string_to_type_lut().end()) {
-      if (cur() != "]" && cur() != "," && cur() != "") {
-        TORCH_CHECK(
-            false, "Simple type ", token, " is followed by ", "invalid chars.");
-      }
-      return simpleTypeIt->second;
-    } else if (token == "List") {
+  static std::unordered_set<std::string> getNonSimpleType() {
+    static std::unordered_set<std::string> nonSimpleType{
+        "List", "Optional", "Dict", "Tuple", "__torch__"};
+    return nonSimpleType;
+  }
+
+  std::unordered_set<std::string> getContainedTypes() {
+    return contained_types_;
+  }
+
+  TypePtr parseNonSimple(const std::string& token) {
+    if (token == "List") {
       return CreateSingleElementType<ListType>();
     } else if (token == "Union") {
       std::vector<TypePtr> types;
@@ -77,13 +80,31 @@ class TypeParser {
       return TupleType::create(types);
     } else if (token == "__torch__") {
       return parseClassType();
+    }
+    return nullptr;
+  }
+
+  TypePtr parse(bool hard_fail = true) {
+    std::string token = next();
+    contained_types_.insert(token);
+    auto simpleTypeIt = string_to_type_lut().find(token);
+    if (simpleTypeIt != string_to_type_lut().end()) {
+      if (hard_fail && cur() != "]" && cur() != "," && cur() != "") {
+        TORCH_CHECK(
+            false, "Simple type ", token, " is followed by ", "invalid chars.");
+      }
+      return simpleTypeIt->second;
+    } else if (getNonSimpleType().find(token) != getNonSimpleType().end()) {
+      return parseNonSimple(token);
     } else {
-      TORCH_CHECK(
-          false,
-          "Type ",
-          token,
-          " is not supported in the parser, ",
-          "or the token is in wrong format.");
+      if (hard_fail) {
+        TORCH_CHECK(
+            false,
+            "Type ",
+            token,
+            " is not supported in the parser, ",
+            "or the token is in wrong format.");
+      }
     }
     return nullptr;
   }
@@ -160,11 +181,32 @@ class TypeParser {
   std::string pythonStr_;
   size_t start_;
   std::string next_token_;
+  std::unordered_set<std::string> contained_types_;
 };
 } // namespace
 
 TORCH_API TypePtr parseType(const std::string& pythonStr) {
-  TypeParser paser(pythonStr);
-  return paser.parse();
+  TypeParser parser(pythonStr);
+  return parser.parse();
 }
+
+TORCH_API std::unordered_set<std::string> getContainedTypes(
+    const std::string& pythonStr) {
+  TypeParser parser(pythonStr);
+  parser.parse(false);
+  return parser.getContainedTypes();
+}
+
+TORCH_API torch::jit::SupportedType getSupportedType() {
+  std::unordered_set<std::string> primitive_types;
+  for (const auto& it : string_to_type_lut()) {
+    primitive_types.insert(it.first);
+  }
+  primitive_types.insert(
+      TypeParser::getNonSimpleType().begin(),
+      TypeParser::getNonSimpleType().end());
+
+  return torch::jit::SupportedType{primitive_types, {}};
+}
+
 } // namespace c10

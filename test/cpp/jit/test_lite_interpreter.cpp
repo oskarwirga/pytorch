@@ -616,6 +616,43 @@ TEST(LiteInterpreterTest, GetRuntimeOpsAndInfo) {
   AT_ASSERT(runtime_ops.size() > 2900);
 }
 
+TEST(LiteInterpreterTest, CompatibleType) {
+  auto runtime_info = RuntimeCompatibilityInfo::get();
+
+  // test trivial success case
+  std::unordered_set<std::string> primitive_type = {"List", "int"};
+  SupportedType type_table{primitive_type, {}};
+
+  std::unordered_map<std::string, OperatorInfo> model_ops;
+  model_ops["aten::add.Scalar"] = OperatorInfo{2};
+
+  auto model_info = ModelCompatibilityInfo{
+      caffe2::serialize::kMaxSupportedBytecodeVersion, model_ops, type_table};
+
+  AT_ASSERT(
+      is_compatible(runtime_info, model_info).status ==
+      ModelCompatibilityStatus::OK);
+}
+
+TEST(LiteInterpreterTest, IncompatibleType) {
+  auto runtime_info = RuntimeCompatibilityInfo::get();
+
+  // test trivial fail case
+  std::unordered_set<std::string> primitive_type = {
+      "List", "int", "NamedTuple"};
+  SupportedType type_table{primitive_type, {}};
+
+  std::unordered_map<std::string, OperatorInfo> model_ops;
+  model_ops["aten::add.Scalar"] = OperatorInfo{2};
+
+  auto model_info = ModelCompatibilityInfo{
+      caffe2::serialize::kMaxSupportedBytecodeVersion, model_ops, type_table};
+
+  AT_ASSERT(
+      is_compatible(runtime_info, model_info).status ==
+      ModelCompatibilityStatus::ERROR);
+}
+
 TEST(LiteInterpreterTest, isCompatibleSuccess) {
   // test trivial success case
   auto runtime_info = RuntimeCompatibilityInfo::get();
@@ -639,7 +676,9 @@ TEST(LiteInterpreterTest, isCompatibleFail) {
   std::unordered_map<std::string, OperatorInfo> runtime_ops;
   runtime_ops["aten::add.Int"] = OperatorInfo{2};
   auto runtime_info = RuntimeCompatibilityInfo{
-      caffe2::serialize::kMaxSupportedBytecodeVersion, runtime_ops};
+      caffe2::serialize::kMaxSupportedBytecodeVersion,
+      _get_supported_types(),
+      runtime_ops};
 
   auto result = is_compatible(runtime_info, model_info);
   AT_ASSERT(result.status = ModelCompatibilityStatus::ERROR);
@@ -650,7 +689,9 @@ TEST(LiteInterpreterTest, isCompatibleFail) {
   // test trivial failure due to bytecode
   runtime_ops["aten::add.Scalar"] = OperatorInfo{2};
   runtime_info = RuntimeCompatibilityInfo{
-      caffe2::serialize::kMaxSupportedBytecodeVersion, runtime_ops};
+      caffe2::serialize::kMaxSupportedBytecodeVersion,
+      _get_supported_types(),
+      runtime_ops};
   model_info.bytecode_version =
       caffe2::serialize::kMaxSupportedBytecodeVersion + 1;
 
