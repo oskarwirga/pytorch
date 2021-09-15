@@ -77,6 +77,7 @@
 namespace c10 {
 // std::string serializeType(const Type &t);
 TypePtr parseType(const std::string& pythonStr);
+TypePtr parseCustomType(IValue custom_type);
 } // namespace c10
 
 namespace torch {

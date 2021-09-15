@@ -5,6 +5,12 @@
 #include <torch/csrc/jit/serialization/import_export_functions.h>
 #include <torch/custom_class_detail.h>
 
+namespace c10 {
+// std::string serializeType(const Type &t);
+TypePtr parseType(const std::string& pythonStr);
+TypePtr parseCustomType(IValue custom_type);
+} // namespace c10
+
 namespace torch {
 namespace jit {
 OpCode parseOpCode(const char* str);
@@ -86,17 +92,26 @@ void parseTypes(
     mobile::Function* function) {
   static const c10::QualifiedName classPrefix = "__torch__.torch.classes";
   for (const auto& t : types_list) {
-    c10::QualifiedName qn(t.toStringRef());
-    if (classPrefix.isPrefixOf(qn)) {
-      auto classType = getCustomClass(qn.qualifiedName());
-      TORCH_CHECK(
-          classType,
-          "The implementation of class ",
-          qn.qualifiedName(),
-          " cannot be found.");
-      function->append_type(classType);
+    if (t.isString()) {
+      c10::QualifiedName qn(t.toStringRef());
+      if (classPrefix.isPrefixOf(qn)) {
+        auto classType = getCustomClass(qn.qualifiedName());
+        TORCH_CHECK(
+            classType,
+            "The implementation of class ",
+            qn.qualifiedName(),
+            " cannot be found.");
+        function->append_type(classType);
+      } else {
+        function->append_type(c10::parseType(t.toStringRef()));
+      }
     } else {
-      function->append_type(c10::parseType(t.toStringRef()));
+      TORCH_CHECK(
+          t.isTuple(),
+          "Custom type should be tuple, but recieve ",
+          t.tagKind());
+      auto tt = c10::parseCustomType(t);
+      function->append_type(tt);
     }
   }
 }
