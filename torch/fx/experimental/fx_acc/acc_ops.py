@@ -9,7 +9,6 @@ from torch.fx.experimental.fx_acc.acc_normalizer import (
     register_acc_op_mapping,
     register_custom_acc_mapper_fn,
 )
-from torch.fx.passes.shape_prop import _extract_tensor_metadata
 
 from typing import Sequence, Optional, List
 
@@ -358,8 +357,6 @@ def square_mapper(node: torch.fx.Node, _: nn.Module) -> torch.fx.Node:
 def matmul(*, input, other):
     return torch.matmul(**locals())
 
-
-
 @register_acc_op_mapping(
     op_and_target=("call_function", torch.ops.quantized.add),
     arg_replacement_tuples=[
@@ -369,18 +366,20 @@ def matmul(*, input, other):
         ("zero_point", "zero_point"),
     ],
     kwargs_to_move_to_acc_out_ty=[
-        ("scale", "q_scale"),
-        ("zero_point", "q_zero_point"),
+        ("scale", "scale"),
+        ("zero_point", "zero_point"),
+        ("qscheme", torch.per_tensor_affine, True),
     ],
 )
 @register_acc_op
 def quantized_add(*, input, other, acc_out_ty=None):
     assert acc_out_ty is not None
+    qparams = acc_utils.get_field_from_acc_out_ty(acc_out_ty, "qparams")
     return torch.ops.quantized.add(
         input,
         other,
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_scale"),
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_zero_point"),
+        qparams["scale"],
+        qparams["zero_point"],
     )
 
 
@@ -393,20 +392,21 @@ def quantized_add(*, input, other, acc_out_ty=None):
         ("zero_point", "zero_point"),
     ],
     kwargs_to_move_to_acc_out_ty=[
-        ("scale", "q_scale"),
-        ("zero_point", "q_zero_point"),
+        ("scale", "scale"),
+        ("zero_point", "zero_point"),
+        ("qscheme", torch.per_tensor_affine, True),
     ],
 )
 @register_acc_op
 def quantized_mul(*, input, other, acc_out_ty=None):
     assert acc_out_ty is not None
+    qparams = acc_utils.get_field_from_acc_out_ty(acc_out_ty, "qparams")
     return torch.ops.quantized.mul(
         input,
         other,
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_scale"),
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_zero_point"),
+        qparams["scale"],
+        qparams["zero_point"],
     )
-
 
 @register_acc_op_mapping(
     op_and_target=("call_function", torch.quantize_per_tensor),
@@ -414,24 +414,54 @@ def quantized_mul(*, input, other, acc_out_ty=None):
         ("input", "input"),
         ("scale", "scale"),
         ("zero_point", "zero_point"),
-        ("dtype", "dtype"),
+        ("dtype", "dtype")
     ],
     kwargs_to_move_to_acc_out_ty=[
+        ("scale", "scale"),
+        ("zero_point", "zero_point"),
         ("dtype", "dtype"),
-        ("scale", "q_scale"),
-        ("zero_point", "q_zero_point"),
+        ("qscheme", torch.per_tensor_affine, True),
     ],
 )
 @register_acc_op
 def quantize_per_tensor(*, input, acc_out_ty=None):
     assert acc_out_ty is not None
+    qparams = acc_utils.get_field_from_acc_out_ty(acc_out_ty, "qparams")
     return torch.quantize_per_tensor(
         input,
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_scale"),
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "q_zero_point"),
-        acc_utils.get_field_from_acc_out_ty(acc_out_ty, "dtype"),
+        qparams["scale"],
+        qparams["zero_point"],
+        qparams["dtype"]
     )
 
+@register_acc_op_mapping(
+    op_and_target=("call_function", torch.quantize_per_channel),
+    arg_replacement_tuples=[
+        ("input", "input"),
+        ("scales", "scales"),
+        ("zero_points", "zero_points"),
+        ("axis", "axis"),
+        ("dtype", "dtype")
+    ],
+    kwargs_to_move_to_acc_out_ty=[
+        ("scales", "scale"),
+        ("zero_points", "zero_point"),
+        ("axis", "axis"),
+        ("dtype", "dtype"),
+        ("qscheme", torch.per_channel_affine, True),
+    ],
+)
+@register_acc_op
+def quantize_per_channel(*, input, acc_out_ty=None):
+    assert acc_out_ty is not None
+    qparams = acc_utils.get_field_from_acc_out_ty(acc_out_ty, "qparams")
+    return torch.quantize_per_tensor(
+        input,
+        qparams["scale"],
+        qparams["zero_point"],
+        qparams["axis"],
+        qparams["dtype"]
+    )
 
 @register_acc_op
 def dequantize(*, input, input_tensor_meta):
@@ -916,6 +946,7 @@ def tuple_construct(*, tensors):
     kwargs_to_move_to_acc_out_ty=[
         ("scale", "q_scale"),
         ("zero_point", "q_zero_point"),
+        ("qscheme", torch.per_tensor_affine, True),
     ],
 )
 @register_acc_op
