@@ -250,6 +250,7 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
           .def(
               "to_here",
               &PyRRef::toHere,
+              py::arg("device_map") = DeviceMap(),
               py::arg("timeout") = py::cast(kUnsetRpcTimeout),
               py::call_guard<py::gil_scoped_release>(),
               R"(
@@ -274,10 +275,11 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
               )")
           .def(
               "rpc_sync",
-              [](const PyRRef& self, float timeoutSeconds) {
+              [](const PyRRef& self, DeviceMap& deviceMap, float timeoutSeconds) {
                 return self.createRRefProxy(
-                    RRefProxyType::RPC_SYNC, timeoutSeconds);
+                    RRefProxyType::RPC_SYNC, deviceMap, timeoutSeconds);
               },
+              py::arg("device_map") = DeviceMap(),
               py::arg("timeout") = kUnsetRpcTimeout,
               py::call_guard<py::gil_scoped_release>(),
               R"(
@@ -306,10 +308,11 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
               )")
           .def(
               "rpc_async",
-              [](const PyRRef& self, float timeoutSeconds) {
+              [](const PyRRef& self, DeviceMap& deviceMap, float timeoutSeconds) {
                 return self.createRRefProxy(
-                    RRefProxyType::RPC_ASYNC, timeoutSeconds);
+                    RRefProxyType::RPC_ASYNC, deviceMap, timeoutSeconds);
               },
+              py::arg("device_map") = DeviceMap(),
               py::arg("timeout") = kUnsetRpcTimeout,
               py::call_guard<py::gil_scoped_release>(),
               R"(
@@ -338,10 +341,11 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
               )")
           .def(
               "remote",
-              [](const PyRRef& self, float timeoutSeconds) {
+              [](const PyRRef& self, DeviceMap& deviceMap, float timeoutSeconds) {
                 return self.createRRefProxy(
-                    RRefProxyType::REMOTE, timeoutSeconds);
+                    RRefProxyType::REMOTE, deviceMap, timeoutSeconds);
               },
+              py::arg("device_map") = DeviceMap(),
               py::arg("timeout") = kUnsetRpcTimeout,
               py::call_guard<py::gil_scoped_release>(),
               R"(
@@ -681,11 +685,17 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
       "_invoke_rpc_builtin",
       [](const WorkerInfo& dst,
          const std::string& opName,
+         DeviceMap& deviceMap,
          const float rpcTimeoutSeconds,
          const py::args& args,
          const py::kwargs& kwargs) {
-        return std::make_shared<jit::PythonFutureWrapper>(
-            pyRpcBuiltin(dst, opName, args, kwargs, rpcTimeoutSeconds));
+        return std::make_shared<jit::PythonFutureWrapper>(pyRpcBuiltin(
+            dst,
+            opName,
+            args,
+            kwargs,
+            deviceMap,
+            rpcTimeoutSeconds));
       },
       py::call_guard<py::gil_scoped_acquire>());
 
@@ -694,12 +704,14 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
       [](const WorkerInfo& dst,
          std::string& pickledPythonUDF,
          std::vector<torch::Tensor>& tensors,
+         DeviceMap& deviceMap,
          const float rpcTimeoutSeconds,
          const bool isAsyncExecution) {
         return std::make_shared<jit::PythonFutureWrapper>(pyRpcPythonUdf(
             dst,
             pickledPythonUDF,
             tensors,
+            deviceMap,
             rpcTimeoutSeconds,
             isAsyncExecution));
       },
@@ -711,6 +723,7 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
          const std::string& qualifiedNameStr,
          const py::tuple& argsTuple,
          const py::dict& kwargsDict,
+         DeviceMap& deviceMap,
          const float rpcTimeoutSeconds,
          const bool isAsyncExecution) {
         return std::make_shared<jit::PythonFutureWrapper>(pyRpcTorchscript(
@@ -718,6 +731,7 @@ PyObject* rpc_init(PyObject* _unused, PyObject* noargs) {
             qualifiedNameStr,
             argsTuple,
             kwargsDict,
+            deviceMap,
             rpcTimeoutSeconds,
             isAsyncExecution));
       },
